@@ -1,4 +1,4 @@
-import type { AnalysisResult, PRContext } from '../types.js';
+import type { AnalysisResult, PRContext, ReviewSuggestion } from '../types.js';
 
 export interface AIModel {
   analyzeReview(
@@ -16,4 +16,10 @@ export interface AIModel {
   ): Promise<string>;
 
   generateReply(reviewComment: string, changesMade: string): Promise<string>;
+
+  reviewCode(
+    filePath: string,
+    patch: string,
+    prContext: PRContext
+  ): Promise<ReviewSuggestion[]>;
 }

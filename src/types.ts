@@ -40,3 +40,20 @@ export interface PendingReply {
   reply: string;
   result: FixResult;
 }
+
+export interface PRFile {
+  filename: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  changes: number;
+  patch?: string;
+  contentsUrl: string;
+}
+
+export interface ReviewSuggestion {
+  path: string;
+  line: number;
+  body: string;
+  side?: 'LEFT' | 'RIGHT';
+}

@@ -1,6 +1,6 @@
 import { Octokit } from 'octokit';
 import { config } from './config.js';
-import type { PRContext, ReviewComment } from './types.js';
+import type { PRContext, ReviewComment, PRFile, ReviewSuggestion } from './types.js';
 
 export class GitHubClient {
   private octokit: Octokit;
@@ -93,6 +93,54 @@ export class GitHubClient {
       pull_number: prNumber,
       comment_id: commentId,
       body: replyText,
+    });
+  }
+
+  async getPrFiles(prUrl: string): Promise<PRFile[]> {
+    const { owner, repo, prNumber } = this.parsePrUrl(prUrl);
+    const { data } = await this.octokit.rest.pulls.listFiles({
+      owner,
+      repo,
+      pull_number: prNumber,
+    });
+
+    return data.map((file) => ({
+      filename: file.filename,
+      status: file.status,
+      additions: file.additions,
+      deletions: file.deletions,
+      changes: file.changes,
+      patch: file.patch,
+      contentsUrl: file.contents_url,
+    }));
+  }
+
+  async createReview(
+    prUrl: string,
+    comments: ReviewSuggestion[],
+    body?: string
+  ): Promise<void> {
+    const { owner, repo, prNumber, data: pr } = await this.getPullRequest(prUrl);
+
+    if (comments.length === 0 && !body) {
+      return;
+    }
+
+    const reviewComments = comments.map((c) => ({
+      path: c.path,
+      line: c.line,
+      body: c.body,
+      side: c.side || ('RIGHT' as const),
+    }));
+
+    await this.octokit.rest.pulls.createReview({
+      owner,
+      repo,
+      pull_number: prNumber,
+      commit_id: pr.head.sha,
+      body: body || '',
+      event: 'COMMENT',
+      comments: reviewComments,
     });
   }
 }

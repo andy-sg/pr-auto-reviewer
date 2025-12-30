@@ -10,14 +10,28 @@ import { GitHubClient } from './github-client.js';
 import { getModel } from './models/index.js';
 import { CodeModifier } from './code-modifier.js';
 import { GitOperations } from './git-ops.js';
-import type { ReviewComment, PendingReply, FixResult } from './types.js';
+import type { ReviewComment, PendingReply, FixResult, ReviewSuggestion } from './types.js';
 
 const program = new Command();
 
 program
-  .name('pr-fix')
+  .name('pr-auto-reviewer')
+  .description('AI-powered PR review and fix tool')
+  .version('1.0.0');
+
+program
+  .command('review')
+  .description('AI reviews PR code and posts review comments')
+  .argument('<pr-url>', 'GitHub Pull Request URL')
+  .option('--dry-run', 'Show what would be done without making changes')
+  .showHelpAfterError(true)
+  .action(async (prUrl: string, options) => {
+    await runReviewMode(prUrl, options);
+  });
+
+program
+  .command('fix')
   .description('Automatically fix code based on PR review comments')
-  .version('1.0.0')
   .argument('<pr-url>', 'GitHub Pull Request URL')
   .option('--repo-path <path>', 'Path to local repository', '.')
   .option('--dry-run', 'Show what would be done without making changes')
@@ -26,6 +40,159 @@ program
   .action(async (prUrl: string, options) => {
     await runFixMode(prUrl, options);
   });
+
+async function runReviewMode(prUrl: string, options: { dryRun?: boolean }) {
+  console.log(chalk.cyan.bold('\n🔍 PR Auto Reviewer - Review Mode\n'));
+
+  try {
+    validateConfig();
+    console.log(chalk.bold(`Using AI model: ${config.defaultModel}`));
+
+    const githubClient = new GitHubClient();
+    const aiModel = getModel();
+
+    // Get PR information
+    const spinner = ora('Fetching PR information...').start();
+    const prContext = await githubClient.getPrContext(prUrl);
+    spinner.succeed('PR information fetched');
+
+    console.log(chalk.bold(`\nPR: #${prContext.number} - ${prContext.title}`));
+    console.log(chalk.bold(`Branch: ${prContext.headBranch} → ${prContext.baseBranch}\n`));
+
+    // Get PR files
+    spinner.start('Fetching PR files...');
+    const files = await githubClient.getPrFiles(prUrl);
+    spinner.succeed('PR files fetched');
+
+    const reviewableFiles = files.filter((f) => f.patch && f.status !== 'removed');
+    console.log(chalk.bold(`\nFound ${reviewableFiles.length} file(s) to review\n`));
+
+    if (reviewableFiles.length === 0) {
+      console.log(chalk.yellow('리뷰할 파일이 없습니다!'));
+      return;
+    }
+
+    // Display files
+    console.log(chalk.bold('변경된 파일 목록:\n'));
+    reviewableFiles.forEach((file, idx) => {
+      const stats = chalk.dim(`+${file.additions} -${file.deletions}`);
+      console.log(`  ${idx + 1}. ${file.filename} ${stats}`);
+    });
+    console.log();
+
+    // Ask how to process
+    const selectionMode = await select({
+      message: '어떻게 처리할까요?',
+      choices: [
+        { name: '✓ 모든 파일 리뷰', value: 'all' },
+        { name: '☐ 특정 파일만 선택', value: 'select' },
+        { name: '✗ 취소', value: 'cancel' },
+      ],
+    });
+
+    if (selectionMode === 'cancel') {
+      console.log(chalk.yellow('취소되었습니다.'));
+      return;
+    }
+
+    let selectedFiles = reviewableFiles;
+
+    if (selectionMode === 'select') {
+      const choices = reviewableFiles.map((file, idx) => ({
+        name: `${file.filename} (+${file.additions} -${file.deletions})`,
+        value: idx,
+      }));
+
+      const selectedIndices = await checkbox({
+        message: '리뷰할 파일을 선택하세요 (Space로 선택, Enter로 확인):',
+        choices,
+      });
+
+      if (selectedIndices.length === 0) {
+        console.log(chalk.yellow('선택된 파일이 없습니다. 종료합니다.'));
+        return;
+      }
+
+      selectedFiles = selectedIndices.map((i) => reviewableFiles[i]);
+    }
+
+    console.log(chalk.bold(`\n${selectedFiles.length}개의 파일을 리뷰합니다.\n`));
+
+    // Review each file
+    const allSuggestions: ReviewSuggestion[] = [];
+
+    for (let idx = 0; idx < selectedFiles.length; idx++) {
+      const file = selectedFiles[idx];
+      console.log(chalk.cyan.bold(`[${idx + 1}/${selectedFiles.length}] ${file.filename}`));
+
+      spinner.start('AI가 코드를 분석중...');
+      const suggestions = await aiModel.reviewCode(file.filename, file.patch!, prContext);
+      spinner.stop();
+
+      if (suggestions.length > 0) {
+        console.log(chalk.green(`  ✓ ${suggestions.length}개의 피드백 생성됨`));
+        suggestions.forEach((s) => {
+          console.log(chalk.dim(`    - Line ${s.line}: ${s.body.slice(0, 50)}...`));
+        });
+        allSuggestions.push(...suggestions);
+      } else {
+        console.log(chalk.dim('  - 피드백 없음'));
+      }
+    }
+
+    console.log('\n' + '='.repeat(50));
+
+    if (allSuggestions.length === 0) {
+      console.log(chalk.green('\n모든 코드가 깨끗합니다! 리뷰 코멘트가 없습니다.\n'));
+      return;
+    }
+
+    // Preview suggestions
+    console.log(chalk.cyan.bold('\n리뷰 코멘트 미리보기\n'));
+
+    allSuggestions.forEach((s, idx) => {
+      console.log(chalk.bold(`#${idx + 1} ${s.path}:${s.line}`));
+      console.log(chalk.green(`  ${s.body}`));
+      console.log();
+    });
+
+    if (options.dryRun) {
+      console.log(chalk.yellow('Dry run mode - 리뷰가 게시되지 않았습니다.'));
+      return;
+    }
+
+    // Confirm posting
+    const shouldPost = await confirm({
+      message: `${allSuggestions.length}개의 리뷰 코멘트를 GitHub에 게시할까요?`,
+      default: true,
+    });
+
+    if (!shouldPost) {
+      console.log(chalk.yellow('취소되었습니다.'));
+      return;
+    }
+
+    // Post review
+    spinner.start('리뷰를 게시중...');
+    try {
+      await githubClient.createReview(prUrl, allSuggestions);
+      spinner.succeed('리뷰가 게시되었습니다!');
+    } catch (e) {
+      spinner.fail('리뷰 게시 실패');
+      console.error(chalk.red(`Error: ${e}`));
+    }
+
+    // Summary
+    console.log('\n' + '='.repeat(50));
+    console.log(chalk.cyan.bold('Summary\n'));
+    console.log(chalk.green(`Files reviewed: ${selectedFiles.length}`));
+    console.log(chalk.green(`Comments posted: ${allSuggestions.length}`));
+  } catch (e) {
+    console.error(chalk.red(`\nError: ${e}`));
+    console.log();
+    program.help();
+  }
+}
 
 async function runFixMode(
   prUrl: string,

@@ -1,7 +1,7 @@
 import { VertexAI } from '@google-cloud/vertexai';
 import { config } from '../config.js';
 import type { AIModel } from './base.js';
-import type { AnalysisResult, PRContext } from '../types.js';
+import type { AnalysisResult, PRContext, ReviewSuggestion } from '../types.js';
 
 export class GeminiModel implements AIModel {
   private model;
@@ -113,5 +113,70 @@ Please provide the COMPLETE fixed file content. Return ONLY the fixed code witho
 
     const result = await this.model.generateContent(prompt);
     return result.response.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+  }
+
+  async reviewCode(
+    filePath: string,
+    patch: string,
+    prContext: PRContext
+  ): Promise<ReviewSuggestion[]> {
+    const prompt = `당신은 코드 리뷰어입니다. 다음 PR의 변경사항을 검토하고 피드백을 제공하세요.
+
+PR 정보:
+- 제목: ${prContext.title}
+- 설명: ${prContext.description || '없음'}
+
+파일: ${filePath}
+변경 내용 (diff 형식):
+\`\`\`diff
+${patch}
+\`\`\`
+
+다음 사항들을 검토하세요:
+1. 버그 또는 잠재적 오류
+2. 코드 품질 및 가독성
+3. 성능 문제
+4. 보안 취약점
+5. 베스트 프랙티스
+
+중요: 사소한 스타일 이슈는 무시하고, 실제로 중요한 문제만 지적하세요.
+피드백이 없으면 빈 배열을 반환하세요.
+
+JSON 형식으로 응답하세요:
+{
+  "suggestions": [
+    {
+      "line": <라인 번호 (변경된 라인의 번호, diff에서 + 로 시작하는 라인)>,
+      "body": "<리뷰 코멘트 내용 (한국어로 작성)>"
+    }
+  ]
+}
+
+반드시 유효한 JSON만 출력하세요.`;
+
+    const result = await this.model.generateContent(prompt);
+    const text = result.response.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+    try {
+      const startIdx = text.indexOf('{');
+      const endIdx = text.lastIndexOf('}') + 1;
+      if (startIdx !== -1 && endIdx > startIdx) {
+        const jsonStr = text.slice(startIdx, endIdx);
+        const parsed = JSON.parse(jsonStr);
+        const suggestions: ReviewSuggestion[] = (parsed.suggestions || []).map(
+          (s: { line: number; body: string }) => ({
+            path: filePath,
+            line: s.line,
+            body: s.body,
+            side: 'RIGHT' as const,
+          })
+        );
+        return suggestions;
+      }
+    } catch {
+      // ignore parse error
+    }
+
+    return [];
   }
 }
