@@ -1,0 +1,39 @@
+{
+  "name": "pr-auto-reviewer",
+  "version": "1.0.0",
+  "description": "Automatically fix code based on PR review comments",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "pr-fix": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "keywords": [
+    "github",
+    "pr",
+    "review",
+    "ai",
+    "automation"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@google-cloud/vertexai": "^1.9.2",
+    "@inquirer/prompts": "^7.2.1",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.7",
+    "octokit": "^4.0.3",
+    "ora": "^8.1.1",
+    "simple-git": "^3.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

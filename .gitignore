@@ -1,33 +1,5 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-
-# Virtual environments
-.venv/
-venv/
-ENV/
-env/
-
-# uv
-.uv/
-uv.lock
-
-# Environment variables
+node_modules/
+dist/
 .env
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
+*.log
 .DS_Store
-Thumbs.db
-
-# Git
-*.orig
